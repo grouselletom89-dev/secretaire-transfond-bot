@@ -9,18 +9,19 @@ from googleapiclient.discovery import build, HttpError
 # --- Chargement des variables d'environnement ---
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_CREDS_JSON_STR = os.getenv('GOOGLE_CREDS_JSON')
 
-# --- ID du salon pour le panneau d'administration ---
-# Remplacez par l'ID de votre salon
-ADMIN_CHANNEL_ID = 1429100071789793371
+# --- Charger les IDs des deux Google Sheets ---
+GOOGLE_SHEET_ID_TRAVAIL = os.getenv('GOOGLE_SHEET_ID_TRAVAIL')
+GOOGLE_SHEET_ID_DIRECTION = os.getenv('GOOGLE_SHEET_ID_DIRECTION')
 
+# --- ID du salon pour le panneau d'administration ---
+ADMIN_CHANNEL_ID = 1429100071789793371 # L'ID de votre salon
 
 # Vérifier si les variables critiques sont chargées
-if not all([TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDS_JSON_STR]):
+if not all([TOKEN, GOOGLE_CREDS_JSON_STR, GOOGLE_SHEET_ID_TRAVAIL, GOOGLE_SHEET_ID_DIRECTION]):
     print("ERREUR CRITIQUE : Variables d'environnement manquantes.")
-    print("Vérifiez DISCORD_TOKEN, GOOGLE_SHEET_ID, et GOOGLE_CREDS_JSON sur Railway.")
+    print("Vérifiez DISCORD_TOKEN, GOOGLE_CREDS_JSON, GOOGLE_SHEET_ID_TRAVAIL, et GOOGLE_SHEET_ID_DIRECTION sur Railway.")
     exit()
 
 # --- Configuration des Intents Discord ---
@@ -44,8 +45,15 @@ def get_google_services():
         return None, None
 
 # --- Boîte de dialogue (Modal) pour entrer l'email ---
-class EmailModal(Modal, title='Partage Google Sheet'):
+# Elle accepte maintenant un sheet_id pour savoir quel document partager
+class EmailModal(Modal):
     
+    def __init__(self, sheet_id: str, sheet_name: str):
+        super().__init__(title=f'Partage - {sheet_name}')
+        self.sheet_id = sheet_id # Stocke l'ID du sheet à partager
+        self.sheet_name = sheet_name
+
+    # Champ de saisie pour l'email
     email_input = TextInput(
         label='Adresse email à ajouter',
         placeholder='exemple@gmail.com',
@@ -72,12 +80,12 @@ class EmailModal(Modal, title='Partage Google Sheet'):
             }
             
             drive_service.permissions().create(
-                fileId=GOOGLE_SHEET_ID,
+                fileId=self.sheet_id,  # Utilise l'ID stocké
                 body=permission,
                 sendNotificationEmail=True
             ).execute()
             
-            await interaction.followup.send(f"Succès ! L'accès éditeur a été donné à `{email}`.", ephemeral=True)
+            await interaction.followup.send(f"Succès ! L'accès éditeur à **{self.sheet_name}** a été donné à `{email}`.", ephemeral=True)
             
         except HttpError as error:
             print(f"Erreur API Google : {error}")
@@ -86,14 +94,24 @@ class EmailModal(Modal, title='Partage Google Sheet'):
             print(f"Erreur inattendue : {e}")
             await interaction.followup.send(f"Une erreur inconnue est survenue : `{e}`", ephemeral=True)
 
-# --- Vue persistante avec le bouton ---
+# --- Vue persistante avec les DEUX boutons ---
 class AdminPanelView(View):
     def __init__(self):
-        super().__init__(timeout=None) 
+        super().__init__(timeout=None) # Vue persistante
 
-    @discord.ui.button(label='Ajouter un Éditeur', style=discord.ButtonStyle.success, custom_id='add_editor_button')
-    async def add_editor_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(EmailModal())
+    @discord.ui.button(label='Fiche de Travail', style=discord.ButtonStyle.success, custom_id='add_editor_travail')
+    async def add_editor_travail_button(self, interaction: discord.Interaction, button: Button):
+        """Ouvre le modal pour le sheet 'Fiche de Travail'."""
+        # Récupère l'ID depuis les variables d'environnement
+        sheet_id = os.getenv('GOOGLE_SHEET_ID_TRAVAIL')
+        await interaction.response.send_modal(EmailModal(sheet_id=sheet_id, sheet_name="Fiche de Travail"))
+
+    @discord.ui.button(label='Direction', style=discord.ButtonStyle.primary, custom_id='add_editor_direction')
+    async def add_editor_direction_button(self, interaction: discord.Interaction, button: Button):
+        """Ouvre le modal pour le sheet 'Direction'."""
+        # Récupère l'ID depuis les variables d'environnement
+        sheet_id = os.getenv('GOOGLE_SHEET_ID_DIRECTION')
+        await interaction.response.send_modal(EmailModal(sheet_id=sheet_id, sheet_name="Direction"))
 
 # --- Événements du Bot ---
 
@@ -102,19 +120,21 @@ async def on_ready():
     """S'exécute quand le bot est connecté et prêt."""
     
     # ÉTAPE 1 : Enregistrer la vue persistante
-    # Doit être fait avant de manipuler des messages avec cette vue
     client.add_view(AdminPanelView())
     
     print(f'Connecté en tant que {client.user} (ID: {client.user.id})')
     print('------')
     print(f"Recherche du panneau d'administration dans le salon {ADMIN_CHANNEL_ID}...")
 
-    # ÉTAPE 2 : Définir le contenu du panneau
+    # ÉTAPE 2 : Définir le contenu du panneau (mis à jour)
     embed = discord.Embed(
         title="Panneau d'administration - Sécrétaire TransFond",
-        description="Utilisez le bouton ci-dessous pour gérer les accès au Google Sheet.",
+        description="Utilisez les boutons ci-dessous pour gérer les accès aux Google Sheets.",
         color=discord.Color.blue()
     )
+    embed.add_field(name="Fiche de Travail", value="Donne l'accès éditeur au document principal.", inline=False)
+    embed.add_field(name="Direction", value="Donne l'accès éditeur au document de la direction.", inline=False)
+    
     view = AdminPanelView()
 
     # ÉTAPE 3 : Trouver le salon
@@ -131,10 +151,9 @@ async def on_ready():
         # ÉTAPE 4 : Chercher un ancien panneau
         panel_message = None
         async for message in channel.history(limit=50):
-            # Chercher un message du bot qui contient un embed avec le bon titre
             if message.author == client.user and message.embeds and message.embeds[0].title == embed.title:
                 panel_message = message
-                break  # On a trouvé le message, on arrête de chercher
+                break
         
         # ÉTAPE 5 : Mettre à jour l'ancien panneau ou en créer un nouveau
         if panel_message:
@@ -169,11 +188,14 @@ async def on_message(message):
         
         embed = discord.Embed(
             title="Panneau d'administration - Sécrétaire TransFond",
-            description="Utilisez le bouton ci-dessous pour gérer les accès au Google Sheet.",
+            description="Utilisez les boutons ci-dessous pour gérer les accès aux Google Sheets.",
             color=discord.Color.blue()
         )
+        embed.add_field(name="Fiche de Travail", value="Donne l'accès éditeur au document principal.", inline=False)
+        embed.add_field(name="Direction", value="Donne l'accès éditeur au document de la direction.", inline=False)
+        
         await message.channel.send(embed=embed, view=AdminPanelView())
-        await message.delete() # Supprime la commande pour garder le salon propre
+        await message.delete()
 
 # --- Lancement ---
 client.run(TOKEN)
