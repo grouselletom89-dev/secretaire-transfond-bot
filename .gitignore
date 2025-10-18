@@ -1,0 +1,18 @@
+# Fichier secret des variables d'environnement
+.env
+
+# Dossier de l'environnement virtuel
+venv/
+.venv/
+*/venv/
+*/.venv/
+
+# Fichiers cache de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Fichiers cache de l'OS
+.DS_Store
+Thumbs.db
