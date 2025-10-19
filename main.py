@@ -14,14 +14,13 @@ GOOGLE_SHEET_ID_TRAVAIL = os.getenv('GOOGLE_SHEET_ID_TRAVAIL')
 GOOGLE_SHEET_ID_DIRECTION = os.getenv('GOOGLE_SHEET_ID_DIRECTION')
 
 # --- ID des salons pour les panneaux ---
-ADMIN_CHANNEL_ID_ADD = 1429100071789793371      # Salon pour le panneau "Ajouter"
-ADMIN_CHANNEL_ID_DELETE = 1429117305467437156  # Salon pour le panneau "Supprimer"
-ADMIN_CHANNEL_ID_COPY = 1429100025530683392    # Salon pour le panneau "Copier"
+ADMIN_CHANNEL_ID_ADD = 1429100071789793371
+ADMIN_CHANNEL_ID_DELETE = 1429117305467437156
+ADMIN_CHANNEL_ID_COPY = 1429100025530683392
 
 # --- Vérification des variables ---
 if not all([TOKEN, GOOGLE_CREDS_JSON_STR, GOOGLE_SHEET_ID_TRAVAIL, GOOGLE_SHEET_ID_DIRECTION]):
     print("ERREUR CRITIQUE : Variables d'environnement manquantes.")
-    print("Vérifiez DISCORD_TOKEN, GOOGLE_CREDS_JSON, GOOGLE_SHEET_ID_TRAVAIL, et GOOGLE_SHEET_ID_DIRECTION sur Railway.")
     exit()
 
 # --- Configuration des Intents Discord ---
@@ -40,6 +39,9 @@ def get_google_services():
     except Exception as e:
         print(f"Erreur lors de l'authentification Google : {e}")
         return None
+
+# ... [TOUT LE RESTE DE VOTRE CODE (SECTIONS 1, 2, 3) RESTE IDENTIQUE] ...
+# (AddEmailModal, AdminAddView, EditorSelectDropdown, AdminDeleteView, CopySheetModal, AdminCopyView)
 
 # ===================================================================
 # --- SECTION 1 : LOGIQUE D'AJOUT D'ÉDITEUR ---
@@ -144,63 +146,45 @@ class AdminDeleteView(View):
         await self.fetch_editors(interaction, GOOGLE_SHEET_ID_DIRECTION, "Direction")
 
 # ===================================================================
-# --- SECTION 3 : LOGIQUE DE COPIE DE DOCUMENT --- (NOUVEAU)
+# --- SECTION 3 : LOGIQUE DE COPIE DE DOCUMENT ---
 # ===================================================================
 
 class CopySheetModal(Modal):
-    """Boîte de dialogue pour demander le nom de la nouvelle copie."""
     def __init__(self, sheet_id: str, sheet_name: str):
         super().__init__(title='Créer une copie')
         self.sheet_id = sheet_id
         self.sheet_name = sheet_name
-
-        self.file_name_input = TextInput(
-            label='Nom de la nouvelle copie',
-            placeholder=f'Copie de {self.sheet_name}',
-            required=True
-        )
+        self.file_name_input = TextInput(label='Nom de la nouvelle copie', placeholder=f'Copie de {self.sheet_name}', required=True)
         self.add_item(self.file_name_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         new_name = self.file_name_input.value
         await interaction.response.defer(ephemeral=True, thinking=True)
-        
         drive_service = get_google_services()
         if not drive_service:
             await interaction.followup.send("Erreur: Connexion aux services Google impossible.", ephemeral=True)
             return
         try:
-            # Définir les métadonnées (juste le nom) pour la copie
             file_metadata = {'name': new_name}
-            
-            # Appeler l'API Google Drive pour copier le fichier
             copied_file = drive_service.files().copy(
-                fileId=self.sheet_id,
-                body=file_metadata,
-                fields='id, name, webViewLink'  # Demander à l'API de retourner ces infos
+                fileId=self.sheet_id, body=file_metadata, fields='id, name, webViewLink'
             ).execute()
-
             file_name = copied_file.get('name')
             file_link = copied_file.get('webViewLink')
-
             await interaction.followup.send(f"Succès ! Copie créée : **[{file_name}]({file_link})**\n*La copie se trouve dans le même dossier que l'original.*", ephemeral=True)
-        
         except HttpError as error:
             await interaction.followup.send(f"Erreur lors de la copie : \n`{error}`", ephemeral=True)
 
 class AdminCopyView(View):
-    """La vue persistante avec le bouton 'Copier'."""
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label='Créer une copie (Fiche de Travail)', style=discord.ButtonStyle.blurple, custom_id='copy_doc_travail', emoji='📄')
     async def copy_travail_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(
-            CopySheetModal(sheet_id=GOOGLE_SHEET_ID_TRAVAIL, sheet_name="Fiche de Travail")
-        )
+        await interaction.response.send_modal(CopySheetModal(sheet_id=GOOGLE_SHEET_ID_TRAVAIL, sheet_name="Fiche de Travail"))
 
 # ===================================================================
-# --- SECTION 4 : ÉVÉNEMENTS DU BOT (ON_READY) --- (MIS À JOUR)
+# --- SECTION 4 : ÉVÉNEMENTS DU BOT (ON_READY) ---
 # ===================================================================
 
 async def setup_panel(channel_id: int, embed: discord.Embed, view: View):
@@ -230,10 +214,31 @@ async def setup_panel(channel_id: int, embed: discord.Embed, view: View):
 async def on_ready():
     """S'exécute quand le bot est connecté et prêt."""
     
+    # --- DÉBUT DU BLOC DE DÉBOGAGE ---
+    print("==============================================")
+    print("--- VÉRIFICATION DU COMPTE DE SERVICE ---")
+    try:
+        creds_info = json.loads(GOOGLE_CREDS_JSON_STR)
+        account_email = creds_info.get('client_email', 'EMAIL NON TROUVÉ')
+        print(f"Le bot utilise ACTUELLEMENT le compte : {account_email}")
+        
+        # Vérifiez si c'est l'ancien ou le nouveau (ajustez si 'v2' n'est pas dans le nom)
+        if "bot-sheets-v2" in account_email:
+            print("DIAGNOSTIC : C'est le bon compte (v2) !")
+        elif "bot-sheets@prime-motif" in account_email: # Mettez l'email de l'ancien compte ici
+            print("DIAGNOSTIC : ERREUR ! C'est l'ANCIEN compte (v1) !")
+        else:
+            print("DIAGNOSTIC : Compte inconnu.")
+            
+    except Exception as e:
+        print(f"Impossible de lire le JSON des identifiants : {e}")
+    print("==============================================")
+    # --- FIN DU BLOC DE DÉBOGAGE ---
+
     # ÉTAPE 1 : Enregistrer TOUTES les vues persistantes
     client.add_view(AdminAddView())
     client.add_view(AdminDeleteView())
-    client.add_view(AdminCopyView()) # NOUVEAU
+    client.add_view(AdminCopyView())
     
     print(f'Connecté en tant que {client.user} (ID: {client.user.id})')
     print('------')
@@ -250,14 +255,13 @@ async def on_ready():
     delete_embed.add_field(name="Direction", value="Liste les éditeurs et permet la suppression.", inline=False)
     await setup_panel(ADMIN_CHANNEL_ID_DELETE, delete_embed, AdminDeleteView())
 
-    # ÉTAPE 4 : Mettre à jour le panneau de COPIE (NOUVEAU)
-    copy_embed = discord.Embed(title="Panneau d'administration - COPIE", description="Utilisez ce bouton pour créer une copie d'un document.", color=discord.Color.gold()) # Couleur 'Or'
+    # ÉTAPE 4 : Mettre à jour le panneau de COPIE
+    copy_embed = discord.Embed(title="Panneau d'administration - COPIE", description="Utilisez ce bouton pour créer une copie d'un document.", color=discord.Color.gold())
     copy_embed.add_field(name="Fiche de Travail", value="Crée une nouvelle copie du document de travail.", inline=False)
     await setup_panel(ADMIN_CHANNEL_ID_COPY, copy_embed, AdminCopyView())
 
 @client.event
 async def on_message(message):
-    """Gère les commandes manuelles (ex: !ping)."""
     if message.author == client.user: return
     if message.content == '!ping':
         await message.channel.send('Pong !')
